@@ -347,3 +347,133 @@ Each approach has its own advantages and trade-offs in terms of performance, res
 ### Conclusion
 
 This experiment clearly demonstrates why production web servers need to implement concurrency mechanisms. The single-threaded approach, while simple to understand and implement, is fundamentally limited in its ability to handle real-world web traffic where multiple clients need to be served simultaneously and some operations may take longer than others.
+
+## Commit 5 Reflection Notes
+
+In this update, I transformed our single-threaded server into a multithreaded one using a ThreadPool implementation. This allows the server to handle multiple requests concurrently, significantly improving its performance under load.
+
+### Understanding ThreadPool
+
+A ThreadPool is a collection of pre-initialized threads that stand ready to execute tasks. This approach offers several advantages over creating a new thread for each incoming request:
+
+1. **Resource Management**: Creating and destroying threads is expensive. A thread pool reuses threads, reducing this overhead.
+2. **Controlled Concurrency**: By limiting the number of threads, we prevent the system from being overwhelmed by too many concurrent operations.
+3. **Load Balancing**: Work can be distributed among available threads efficiently.
+
+### ThreadPool Implementation
+
+The ThreadPool implementation consists of several key components:
+
+#### 1. ThreadPool Structure
+
+```rust
+pub struct ThreadPool {
+    workers: Vec<Worker>,
+    sender: mpsc::Sender<Job>,
+}
+```
+
+The ThreadPool holds:
+
+- A vector of Worker instances (each owning a thread)
+- A sender for a channel to communicate with the workers
+
+#### 2. Job Type
+
+```rust
+type Job = Box<dyn FnOnce() + Send + 'static>;
+```
+
+This type represents a task to be executed, using:
+
+- `Box<dyn FnOnce()>`: A boxed closure that can be executed once
+- `Send`: Makes the Job transferable between threads
+- `'static`: Ensures the Job lives as long as needed
+
+#### 3. Worker Structure
+
+```rust
+struct Worker {
+    id: usize,
+    thread: thread::JoinHandle<()>,
+}
+```
+
+Each Worker has:
+
+- An identifier for debugging
+- A JoinHandle to its thread
+
+#### 4. Channel-based Communication
+
+The implementation uses a channel (`mpsc`) to communicate between the ThreadPool and its Workers:
+
+1. The ThreadPool sends jobs through the `sender`
+2. Workers share an `Arc<Mutex<Receiver>>` to receive jobs
+3. Each worker continuously attempts to receive and execute jobs
+
+### Shared State Architecture
+
+The implementation demonstrates several concurrent programming patterns:
+
+1. **Message Passing**: The channel (sender/receiver) allows communication between threads
+2. **Shared Ownership**: `Arc<T>` (Atomic Reference Counting) enables multiple threads to share ownership of the receiver
+3. **Mutual Exclusion**: `Mutex<T>` ensures only one thread can access the receiver at a time, preventing race conditions
+4. **Thread Synchronization**: The receiver blocks when no jobs are available, effectively synchronizing worker threads
+
+### Updated Main Function
+
+The server now creates a ThreadPool and uses it to handle incoming connections:
+
+```rust
+fn main() {
+    let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
+    let pool = ThreadPool::new(4);
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        pool.execute(|| {
+            handle_connection(stream);
+        });
+    }
+}
+```
+
+### Benefits of the Multithreaded Approach
+
+With this implementation, our server can now:
+
+1. **Handle Concurrent Requests**: Multiple clients can be served simultaneously
+2. **Overcome the Slow Response Issue**: A single slow request no longer blocks the entire server
+3. **Utilize Multiple CPU Cores**: The workload can be distributed across multiple cores
+4. **Scale More Effectively**: The server can handle higher traffic loads with better response times
+
+### Testing the Improvement
+
+When testing with the slow response simulation (accessing `/sleep` in one browser and `/` in another), both requests are now processed concurrently:
+
+- The `/sleep` route still takes 10 seconds to respond
+- The `/` route responds immediately, regardless of ongoing slow requests
+- The server remains responsive to new requests even while processing long-running ones
+
+### Thread Safety Considerations
+
+Rust's ownership system ensures our multithreaded implementation is safe:
+
+1. **No Data Races**: The compiler prevents sharing mutable data across threads without proper synchronization
+2. **Ownership Transfer**: When a closure is sent to a worker, ownership of captured variables is transferred
+3. **Thread-Safe Primitives**: `Arc` and `Mutex` provide safe cross-thread access to shared data
+4. **Safe Concurrency**: Rust guarantees memory safety and thread safety at compile time
+
+### Further Improvements
+
+While our ThreadPool implementation is functional, it could be enhanced with:
+
+1. **Graceful Shutdown**: Adding a way to send a termination signal to all workers
+2. **Dynamic Thread Scaling**: Adjusting the number of threads based on system load
+3. **Task Prioritization**: Adding support for prioritized job execution
+4. **Error Handling**: Improving error handling for worker threads
+5. **Performance Metrics**: Collecting statistics on thread usage and response times
+
+This multithreaded implementation demonstrates how Rust's powerful concurrency features can be used to build efficient, safe concurrent systems without the common pitfalls found in other languages.
