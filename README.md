@@ -179,3 +179,77 @@ After implementing this change, the browser now properly displays the HTML conte
 ![Commit 2 screen capture](/assets/images/commit2.png)
 
 This successful implementation demonstrates how a few lines of Rust code can create a functional web server that follows HTTP protocol standards and delivers content to browsers efficiently.
+
+## Commit 3 Reflection Notes
+
+In this update, I enhanced the web server to validate requests and respond differently based on the requested path.
+
+### Request Validation and Selective Responses
+
+The updated implementation now:
+
+1. **Parses the request line** to determine which path the client is requesting
+2. **Checks the path**:
+   - If the path is `/` (root), it serves the `hello.html` page with a `200 OK` status
+   - If the path is anything else (like `/bad`), it serves the `404.html` page with a `404 NOT FOUND` status
+
+This is a basic implementation of routing, a fundamental concept in web servers that maps URLs to specific handlers or resources.
+
+### Code Analysis
+
+Here's the key part of the updated implementation:
+
+```rust
+fn handle_connection(mut stream: TcpStream) {
+    let buf_reader = BufReader::new(&mut stream);
+    let request_line = buf_reader.lines().next().unwrap().unwrap();
+
+    let (status_line, filename) = if request_line == "GET / HTTP/1.1" {
+        ("HTTP/1.1 200 OK", "hello.html")
+    } else {
+        ("HTTP/1.1 404 NOT FOUND", "404.html")
+    };
+
+    let contents = fs::read_to_string(filename).unwrap();
+    let length = contents.len();
+
+    let response = format!("{status_line}\r\nContent-Length: {length}\r\n\r\n{contents}");
+    stream.write_all(response.as_bytes()).unwrap();
+}
+```
+
+Important changes and patterns in this code:
+
+1. **Request parsing**: Instead of collecting all request headers, we only read the first line with `buf_reader.lines().next()` which contains the HTTP method, path, and version.
+
+2. **Conditional logic**: The code uses a simple `if-else` pattern for routing decisions, which works for our basic case but would need a more sophisticated approach for a real-world application.
+
+3. **Tuple assignment**: The line `let (status_line, filename) = if...` demonstrates Rust's tuple pattern matching, allowing us to get both values at once from the condition.
+
+4. **HTTP status codes**: We're now sending different status codes (200 or 404) depending on the request path.
+
+### Need for Refactoring
+
+As our server grows more complex, having all logic in the `handle_connection` function would make the code harder to maintain. Refactoring helps by:
+
+1. **Separating concerns**: Different functions can handle different aspects of the request-response cycle
+2. **Improving readability**: Smaller, focused functions are easier to understand
+3. **Enabling reuse**: Common operations can be extracted into reusable functions
+4. **Facilitating testing**: Isolated functions are easier to test
+
+A common refactoring approach for web servers is to separate:
+
+- Request parsing
+- Route handling
+- Response generation
+- Error handling
+
+### Result in Browser
+
+When accessing the root path (`http://127.0.0.1:7878/`), the browser displays the welcome page:
+
+![Normal page](/assets/images/commit2.png)
+
+When accessing an invalid path (`http://127.0.0.1:7878/bad`), the browser displays the 404 error page:
+
+![404 page](/assets/images/commit3.png)
