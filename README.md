@@ -253,3 +253,97 @@ When accessing the root path (`http://127.0.0.1:7878/`), the browser displays th
 When accessing an invalid path (`http://127.0.0.1:7878/bad`), the browser displays the 404 error page:
 
 ![404 page](/assets/images/commit3.png)
+
+## Commit 4 Reflection Notes
+
+In this update, I enhanced the web server to simulate a slow response, which helps demonstrate the limitations of a single-threaded server architecture.
+
+### Simulating Slow Responses
+
+The updated implementation now includes a special path `/sleep` that intentionally delays the response by 10 seconds:
+
+```rust
+let (status_line, filename) = match &request_line[..] {
+    "GET / HTTP/1.1" => ("HTTP/1.1 200 OK", "hello.html"),
+    "GET /sleep HTTP/1.1" => {
+        thread::sleep(Duration::from_secs(10));
+        ("HTTP/1.1 200 OK", "hello.html")
+    }
+    _ => ("HTTP/1.1 404 NOT FOUND", "404.html"),
+};
+```
+
+This simulation demonstrates a critical limitation of single-threaded servers: while one request is being processed, all other requests are blocked.
+
+### The Problem with Single-Threaded Servers
+
+When testing with two browser windows simultaneously - one accessing `/sleep` and the other accessing the root path `/` - I observed that the second request doesn't complete until the first one finishes. This happens because:
+
+1. **Sequential Processing**: Our server processes one request at a time in the order they're received
+2. **Blocking Operations**: When the server encounters the `thread::sleep(Duration::from_secs(10))` call, the entire server is blocked
+3. **No Concurrency**: There's no ability to handle multiple clients simultaneously
+
+In a real-world scenario, this would mean that:
+
+- A single slow request could significantly degrade server performance
+- During high traffic, users would experience increasing delays
+- Resource-intensive operations would block all other users
+- The server could easily become overwhelmed with even moderate traffic
+
+### Thread Starvation Explained
+
+What we're experiencing is called "thread starvation" - when a single long-running operation prevents other operations from being processed. In our case:
+
+1. The main thread is tied up handling the `/sleep` request
+2. All other incoming connections are queued by the OS
+3. No progress can be made on other requests until the sleep operation completes
+4. The server becomes effectively unresponsive for the duration of the slow operation
+
+### Performance Implications
+
+This experiment highlights several performance concerns:
+
+1. **Poor Scalability**: As the number of clients increases, response times grow linearly or worse
+2. **Vulnerability to Abuse**: Malicious clients could intentionally make slow requests to perform a denial of service attack
+3. **Inefficient Resource Utilization**: While the CPU is mostly idle during the `sleep` call, it can't be used to serve other requests
+4. **Timeout Problems**: Browser requests might timeout if too many slow requests are in the queue
+
+### Potential Solutions
+
+To overcome these limitations, several approaches could be implemented:
+
+1. **Multi-threading**: Create a new thread for each connection, allowing concurrent processing
+
+   ```rust
+   for stream in listener.incoming() {
+       let stream = stream.unwrap();
+       thread::spawn(|| {
+           handle_connection(stream);
+       });
+   }
+   ```
+
+2. **Thread Pools**: Pre-create a pool of worker threads to handle incoming requests, limiting resource consumption
+
+   ```rust
+   let pool = ThreadPool::new(4); // Create a pool with 4 threads
+   for stream in listener.incoming() {
+       let stream = stream.unwrap();
+       pool.execute(|| {
+           handle_connection(stream);
+       });
+   }
+   ```
+
+3. **Asynchronous I/O**: Use non-blocking I/O operations with Rust's async/await features
+   ```rust
+   async fn handle_connection(mut stream: TcpStream) {
+       // Async implementation
+   }
+   ```
+
+Each approach has its own advantages and trade-offs in terms of performance, resource usage, and complexity.
+
+### Conclusion
+
+This experiment clearly demonstrates why production web servers need to implement concurrency mechanisms. The single-threaded approach, while simple to understand and implement, is fundamentally limited in its ability to handle real-world web traffic where multiple clients need to be served simultaneously and some operations may take longer than others.
