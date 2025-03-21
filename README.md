@@ -477,3 +477,121 @@ While our ThreadPool implementation is functional, it could be enhanced with:
 5. **Performance Metrics**: Collecting statistics on thread usage and response times
 
 This multithreaded implementation demonstrates how Rust's powerful concurrency features can be used to build efficient, safe concurrent systems without the common pitfalls found in other languages.
+
+## Commit Bonus Reflection Notes
+
+In this bonus update, I implemented an alternative constructor method for the ThreadPool called `build`. This method demonstrates how to improve error handling compared to the original `new` constructor.
+
+### The Builder Pattern and Error Handling
+
+The new `build` function follows a pattern commonly seen in Rust libraries where:
+
+- `new` functions are simple and may panic for invalid inputs
+- `build` functions return a `Result` type for more graceful error handling
+
+```rust
+pub fn build(size: usize) -> Result<ThreadPool, PoolCreationError> {
+    if size == 0 {
+        return Err(PoolCreationError::ZeroSize);
+    }
+
+    // Create thread pool...
+
+    Ok(ThreadPool { workers, sender })
+}
+```
+
+### Custom Error Type
+
+I implemented a custom error type to better represent the specific errors that might occur during thread pool creation:
+
+```rust
+#[derive(Debug)]
+pub enum PoolCreationError {
+    ZeroSize,
+    ThreadCreationError(String),
+}
+```
+
+This provides more context about what went wrong compared to a simple assertion or generic error.
+
+### Comparing `new` vs `build`
+
+| Aspect                   | `new` Method                       | `build` Method                      |
+| ------------------------ | ---------------------------------- | ----------------------------------- |
+| **Error Handling**       | Panics on invalid size             | Returns `Result` with error details |
+| **Recovery**             | None - program crashes             | Caller can handle errors gracefully |
+| **Usage Complexity**     | Simpler - no error checking needed | Requires error handling code        |
+| **Debugging**            | Less informative (just panic)      | More informative error details      |
+| **Production Readiness** | Good for internal code             | Better for library interfaces       |
+
+### Rust's "Constructor" Patterns
+
+Unlike languages with dedicated constructors, Rust uses static methods as constructors. This provides flexibility in how objects are created:
+
+1. **Default Constructor**: Using the `Default` trait
+2. **Simple Constructor**: The conventional `new` function
+3. **Error-Handling Constructor**: Functions like `build` that return `Result`
+4. **Builder Pattern**: A separate builder struct with chainable methods
+
+### Application in Our Server
+
+Our updated main function demonstrates how to use the `build` method with proper error handling:
+
+```rust
+let pool = match ThreadPool::build(4) {
+    Ok(pool) => pool,
+    Err(e) => {
+        eprintln!("Failed to create thread pool: {:?}", e);
+        return;
+    }
+};
+```
+
+This pattern is more robust because:
+
+1. Errors are explicitly handled rather than crashing the program
+2. Error details are logged to help with debugging
+3. The program can gracefully exit or try alternative approaches
+
+### Worker Improvements
+
+The Worker struct also got a `build` method that properly handles potential thread creation failures:
+
+```rust
+fn build(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>)
+    -> Result<Worker, std::io::Error> {
+    let thread = match std::thread::Builder::new()
+        .name(format!("worker-{}", id))
+        .spawn(/* ... */) {
+            Ok(thread) => thread,
+            Err(e) => return Err(e),
+        };
+
+    Ok(Worker { id, thread })
+}
+```
+
+This allows us to:
+
+1. Name our threads for better debugging
+2. Properly propagate thread creation errors
+3. Handle resource exhaustion scenarios
+
+### When to Use Each Approach
+
+- Use `new` when:
+
+  - Invalid inputs would indicate a programming error
+  - The function is used internally where failures should crash tests
+  - Simplicity is preferred and requirements are well-defined
+
+- Use `build` when:
+  - Failures might legitimately occur at runtime
+  - The caller needs to handle errors gracefully
+  - More detailed error information is beneficial
+  - Creating a robust public API
+
+### Conclusion
+
+Adding this alternative constructor demonstrates a more production-ready approach to creating the ThreadPool. While the `new` method is simpler to use, the `build` method offers better error handling and more flexibility. This pattern is common in professional Rust libraries and follows the language's philosophy of making errors explicit and recoverable.

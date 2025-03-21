@@ -9,15 +9,27 @@ use hello::ThreadPool;
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
-    let pool = ThreadPool::new(4);
+    
+    // Using build instead of new to demonstrate error handling
+    let pool = match ThreadPool::build(4) {
+        Ok(pool) => pool,
+        Err(e) => {
+            eprintln!("Failed to create thread pool: {:?}", e);
+            return;
+        }
+    };
 
-    for stream in listener.incoming() {
+    // Handle only a limited number of requests to demonstrate proper shutdown
+    for stream in listener.incoming().take(10) {
         let stream = stream.unwrap();
         
         pool.execute(|| {
             handle_connection(stream);
         });
     }
+    
+    println!("Shutting down server after processing 10 requests");
+    // The ThreadPool will be automatically dropped here, triggering the Drop implementation
 }
 
 fn handle_connection(mut stream: TcpStream) {
